@@ -2,6 +2,8 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const dayjs = require('dayjs');
+const os = require('os');
+const { execSync } = require('child_process');
 
 const { db, initDb } = require('./src/db');
 const {
@@ -39,7 +41,145 @@ function normalizeStatus(s) {
 
 app.get('/favicon.ico', (req, res) => res.status(204).end());
 
-app.get('/', (req, res) => res.redirect('/tasks/inbox'));
+function readJsonlUsage({ days = 7, maxFiles = 80 } = {}) {
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  const dir = path.join(os.homedir(), '.clawdbot', 'agents', 'main', 'sessions');
+  if (!fs.existsSync(dir)) return { dir, byDay: {}, sessions: [] };
+
+  const files = fs
+    .readdirSync(dir)
+    .filter((f) => f.endsWith('.jsonl'))
+    .map((f) => {
+      const p = path.join(dir, f);
+      const st = fs.statSync(p);
+      return { f, p, mtimeMs: st.mtimeMs, size: st.size };
+    })
+    .filter((x) => x.mtimeMs >= cutoff)
+    .sort((a, b) => b.mtimeMs - a.mtimeMs)
+    .slice(0, maxFiles);
+
+  const byDay = {}; // YYYY-MM-DD -> counters
+  const sessions = []; // per file summary
+
+  for (const file of files) {
+    let sum = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, costTotal: 0, messages: 0 };
+    const lines = fs.readFileSync(file.p, 'utf8').split('\n').filter(Boolean);
+    for (const line of lines) {
+      let obj;
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (obj.type !== 'message') continue;
+      const usage = obj.usage || (obj.message && obj.message.usage);
+      if (!usage) continue;
+
+      const ts = obj.timestamp ? new Date(obj.timestamp).getTime() : file.mtimeMs;
+      const day = dayjs(ts).format('YYYY-MM-DD');
+      if (!byDay[day]) {
+        byDay[day] = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, costTotal: 0, messages: 0 };
+      }
+
+      const costTotal = usage.cost && typeof usage.cost.total === 'number' ? usage.cost.total : 0;
+      const input = Number(usage.input || 0);
+      const output = Number(usage.output || 0);
+      const cacheRead = Number(usage.cacheRead || 0);
+      const cacheWrite = Number(usage.cacheWrite || 0);
+      const totalTokens = Number(usage.totalTokens || 0);
+
+      byDay[day].input += input;
+      byDay[day].output += output;
+      byDay[day].cacheRead += cacheRead;
+      byDay[day].cacheWrite += cacheWrite;
+      byDay[day].totalTokens += totalTokens;
+      byDay[day].costTotal += costTotal;
+      byDay[day].messages += 1;
+
+      sum.input += input;
+      sum.output += output;
+      sum.cacheRead += cacheRead;
+      sum.cacheWrite += cacheWrite;
+      sum.totalTokens += totalTokens;
+      sum.costTotal += costTotal;
+      sum.messages += 1;
+    }
+
+    sessions.push({
+      file: file.f,
+      mtime: dayjs(file.mtimeMs).format('YYYY-MM-DD HH:mm'),
+      totalTokens: sum.totalTokens,
+      costTotal: sum.costTotal,
+      messages: sum.messages,
+      path: file.p,
+    });
+  }
+
+  return { dir, byDay, sessions };
+}
+
+function fmtNum(n) {
+  return new Intl.NumberFormat('en-US').format(Math.round(n || 0));
+}
+
+function fmtUsd(n) {
+  if (!n) return '$0.00';
+  return '$' + Number(n).toFixed(4);
+}
+
+app.get('/', (req, res) => {
+  const usage = readJsonlUsage({ days: 7, maxFiles: 40 });
+  const days = Object.keys(usage.byDay).sort().reverse();
+  const today = days[0] ? usage.byDay[days[0]] : null;
+
+  const notice = req.query.notice ? `<div class="notice">${escapeHtml(String(req.query.notice))}</div>` : '';
+
+  res.send(
+    layout({
+      title: 'Home · Brad Control Center',
+      active: 'home',
+      body: `
+        <h1>Central</h1>
+        <p class="muted">Cockpit local para tarefas, jobs e observabilidade.</p>
+        ${notice}
+
+        <div class="row">
+          <div class="col">
+            <div class="card">
+              <h2>Hoje</h2>
+              <div class="muted small">Tokens (7d logs locais)</div>
+              <div style="margin-top:8px"><strong>${today ? fmtNum(today.totalTokens) : '—'}</strong> tokens</div>
+              <div class="muted small">Custo estimado: <strong>${today ? fmtUsd(today.costTotal) : '—'}</strong></div>
+              <div class="spacer"></div>
+              <a class="btn" href="/usage">Ver Usage</a>
+            </div>
+          </div>
+          <div class="col">
+            <div class="card">
+              <h2>Jobs</h2>
+              <div class="muted small">Ações rápidas (digest/import).</div>
+              <div class="spacer"></div>
+              <a class="btn" href="/jobs">Abrir Jobs</a>
+            </div>
+          </div>
+        </div>
+
+        <div class="spacer"></div>
+        <div class="row">
+          <div class="col">
+            <div class="card">
+              <h2>Apps</h2>
+              <ul class="links">
+                <li>✅ <a href="/tasks/inbox">Control Center (Tasks)</a></li>
+                <li>✅ <a href="http://localhost:4677" target="_blank" rel="noreferrer">Bot Store</a></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      `,
+    })
+  );
+});
 
 app.get('/tasks/:status', (req, res) => {
   const status = normalizeStatus(req.params.status);
@@ -223,6 +363,143 @@ app.get('/links', (req, res) => {
       `,
     })
   );
+});
+
+app.get('/usage', (req, res) => {
+  const days = req.query.days ? Math.max(1, Math.min(30, Number(req.query.days))) : 7;
+  const usage = readJsonlUsage({ days, maxFiles: 120 });
+  const keys = Object.keys(usage.byDay).sort().reverse();
+
+  const rows = keys
+    .map((k) => {
+      const d = usage.byDay[k];
+      return `<tr>
+        <td class="w-48"><strong>${escapeHtml(k)}</strong><div class="muted small">${d.messages} msg(s)</div></td>
+        <td class="w-24">${fmtNum(d.input)}</td>
+        <td class="w-24">${fmtNum(d.output)}</td>
+        <td class="w-24">${fmtNum(d.cacheRead)}</td>
+        <td class="w-24">${fmtNum(d.totalTokens)}</td>
+        <td class="w-24">${escapeHtml(fmtUsd(d.costTotal))}</td>
+      </tr>`;
+    })
+    .join('');
+
+  const top = usage.sessions
+    .filter((s) => s.totalTokens > 0)
+    .sort((a, b) => b.totalTokens - a.totalTokens)
+    .slice(0, 10)
+    .map(
+      (s) =>
+        `<li><strong>${fmtNum(s.totalTokens)}</strong> tokens · ${escapeHtml(fmtUsd(s.costTotal))} · <span class="muted">${escapeHtml(
+          s.mtime
+        )}</span><div class="muted small">${escapeHtml(s.file)}</div></li>`
+    )
+    .join('');
+
+  res.send(
+    layout({
+      title: 'Usage · Brad Control Center',
+      active: 'usage',
+      body: `
+        <h1>Usage</h1>
+        <p class="muted">Fonte: logs locais do Clawdbot (<code>${escapeHtml(usage.dir)}</code>). Custos são estimados a partir do campo <code>usage.cost.total</code> quando disponível.</p>
+
+        <form method="GET" action="/usage" class="inline">
+          <label class="muted small">Dias
+            <select name="days">
+              ${[1, 3, 7, 14, 30]
+                .map((d) => `<option value="${d}" ${d === days ? 'selected' : ''}>${d}</option>`)
+                .join('')}
+            </select>
+          </label>
+          <button class="btn secondary" type="submit">Atualizar</button>
+        </form>
+
+        <div class="spacer"></div>
+        <div class="card">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Dia</th>
+                <th>Input</th>
+                <th>Output</th>
+                <th>Cache read</th>
+                <th>Total</th>
+                <th>Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows || '<tr><td colspan="6" class="muted">Sem dados.</td></tr>'}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="spacer"></div>
+        <h2>Top sessões (tokens)</h2>
+        <ul class="links">
+          ${top || '<li class="muted">Sem dados.</li>'}
+        </ul>
+      `,
+    })
+  );
+});
+
+app.get('/jobs', (req, res) => {
+  const notice = req.query.notice ? `<div class="notice">${escapeHtml(String(req.query.notice))}</div>` : '';
+  res.send(
+    layout({
+      title: 'Jobs · Brad Control Center',
+      active: 'jobs',
+      body: `
+        <h1>Jobs</h1>
+        <p class="muted">Ações rápidas. Tudo local e sem input do utilizador.</p>
+        ${notice}
+
+        <div class="row">
+          <div class="col">
+            <div class="card">
+              <h2>Email digest (agora)</h2>
+              <form method="POST" action="/jobs/run-digest" class="inline">
+                <button class="btn" type="submit">Run digest now</button>
+              </form>
+              <div class="muted small" style="margin-top:10px">Isto faz <code>clawdbot cron run d0502... --force</code></div>
+            </div>
+          </div>
+          <div class="col">
+            <div class="card">
+              <h2>Import INBOX.md</h2>
+              <form method="POST" action="/import/inbox-md" class="inline">
+                <button class="btn secondary" type="submit">Import INBOX.md</button>
+              </form>
+              <div class="muted small" style="margin-top:10px">Idempotente por título.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="spacer"></div>
+        <div class="card">
+          <h2>Links</h2>
+          <div class="inline">
+            <a class="btn secondary" href="/usage">Usage</a>
+            <a class="btn secondary" href="/health">Health</a>
+            <a class="btn secondary" href="http://localhost:4677" target="_blank" rel="noreferrer">Bot Store</a>
+          </div>
+        </div>
+      `,
+    })
+  );
+});
+
+app.post('/jobs/run-digest', (req, res) => {
+  try {
+    execSync('clawdbot cron run d0502bb6-f558-449e-96e0-44c97553254a --force', {
+      stdio: 'pipe',
+      timeout: 10 * 60 * 1000,
+    });
+    return res.redirect('/jobs?notice=' + encodeURIComponent('Digest disparado. Se não chegar, vê o /health + cron runs.'));
+  } catch (e) {
+    return res.redirect('/jobs?notice=' + encodeURIComponent('Falhou a correr o digest. Vê logs no terminal.'));
+  }
 });
 
 app.get('/health', (req, res) => {

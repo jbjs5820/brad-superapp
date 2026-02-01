@@ -21,12 +21,15 @@ function pill(status) {
 
 function nav(active) {
   const items = [
+    { key: 'home', label: 'Home', href: '/' },
     { key: 'inbox', label: 'Inbox', href: '/tasks/inbox' },
     { key: 'next', label: 'Next', href: '/tasks/next' },
     { key: 'scheduled', label: 'Scheduled', href: '/tasks/scheduled' },
     { key: 'waiting', label: 'Waiting', href: '/tasks/waiting' },
     { key: 'done', label: 'Done', href: '/tasks/done' },
     { key: 'all', label: 'All', href: '/tasks' },
+    { key: 'usage', label: 'Usage', href: '/usage' },
+    { key: 'jobs', label: 'Jobs', href: '/jobs' },
     { key: 'import', label: 'Import', href: '/import' },
     { key: 'links', label: 'Links', href: '/links' },
     { key: 'health', label: 'Health', href: '/health' },
@@ -69,7 +72,7 @@ function layout({ title, body, active }) {
         <button class="btn secondary" type="submit">Import INBOX.md</button>
       </form>
     </div>
-    <span class="muted">Local only · http://localhost</span>
+    <span class="muted">Local only · <a href="http://localhost:4677" target="_blank" rel="noreferrer">Bot Store</a></span>
   </footer>
 </body>
 </html>`;
