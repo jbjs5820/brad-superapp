@@ -1,0 +1,30 @@
+{
+  "name": "sales-forecast-bot",
+  "displayName": "Sales Forecast Bot",
+  "version": "0.1.0",
+  "description": "Forecasts, cenários e premissas auditáveis (IA + Excel).",
+  "author": "Brad",
+  "license": "Proprietary",
+  "tags": ["sales", "finance", "excel"],
+  "capabilities": ["forecasting", "scenario-planning", "pricing"],
+  "permissions": {
+    "tools": ["gog.sheets.read", "gog.sheets.write"],
+    "files": {
+      "read": ["./INBOX.md", "./outputs"],
+      "write": ["./outputs"]
+    },
+    "network": {
+      "allow": ["docs.google.com", "sheets.googleapis.com"]
+    }
+  },
+  "entrypoints": {
+    "runbook": "README.md",
+    "commands": [
+      {
+        "name": "forecast",
+        "description": "Generate an Excel forecast skeleton + assumptions table",
+        "script": "scripts/forecast.md"
+      }
+    ]
+  }
+}

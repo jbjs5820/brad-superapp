@@ -1,0 +1,27 @@
+{
+  "name": "inbox-triage-bot",
+  "displayName": "Inbox Triage Bot",
+  "version": "0.1.0",
+  "description": "Triagem de tarefas: inbox -> next/scheduled/waiting com regras e contexto.",
+  "author": "Brad",
+  "license": "Proprietary",
+  "tags": ["productivity", "workflow"],
+  "capabilities": ["triage", "planning"],
+  "permissions": {
+    "tools": [],
+    "files": {
+      "read": ["./INBOX.md", "./memory"],
+      "write": ["./INBOX.md"]
+    }
+  },
+  "entrypoints": {
+    "runbook": "README.md",
+    "commands": [
+      {
+        "name": "triage",
+        "description": "Suggest moves + rewrite INBOX into next actions",
+        "script": "scripts/triage.md"
+      }
+    ]
+  }
+}

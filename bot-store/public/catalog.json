@@ -1,0 +1,92 @@
+{
+  "generatedAt": "2026-02-01T03:26:10.604Z",
+  "packages": [
+    {
+      "name": "inbox-triage-bot",
+      "displayName": "Inbox Triage Bot",
+      "version": "0.1.0",
+      "description": "Triagem de tarefas: inbox -> next/scheduled/waiting com regras e contexto.",
+      "author": "Brad",
+      "license": "Proprietary",
+      "tags": [
+        "productivity",
+        "workflow"
+      ],
+      "capabilities": [
+        "triage",
+        "planning"
+      ],
+      "permissions": {
+        "tools": [],
+        "files": {
+          "read": [
+            "./INBOX.md",
+            "./memory"
+          ],
+          "write": [
+            "./INBOX.md"
+          ]
+        }
+      },
+      "entrypoints": {
+        "runbook": "README.md",
+        "commands": [
+          {
+            "name": "triage",
+            "description": "Suggest moves + rewrite INBOX into next actions",
+            "script": "scripts/triage.md"
+          }
+        ]
+      }
+    },
+    {
+      "name": "sales-forecast-bot",
+      "displayName": "Sales Forecast Bot",
+      "version": "0.1.0",
+      "description": "Forecasts, cenários e premissas auditáveis (IA + Excel).",
+      "author": "Brad",
+      "license": "Proprietary",
+      "tags": [
+        "sales",
+        "finance",
+        "excel"
+      ],
+      "capabilities": [
+        "forecasting",
+        "scenario-planning",
+        "pricing"
+      ],
+      "permissions": {
+        "tools": [
+          "gog.sheets.read",
+          "gog.sheets.write"
+        ],
+        "files": {
+          "read": [
+            "./INBOX.md",
+            "./outputs"
+          ],
+          "write": [
+            "./outputs"
+          ]
+        },
+        "network": {
+          "allow": [
+            "docs.google.com",
+            "sheets.googleapis.com"
+          ]
+        }
+      },
+      "entrypoints": {
+        "runbook": "README.md",
+        "commands": [
+          {
+            "name": "forecast",
+            "description": "Generate an Excel forecast skeleton + assumptions table",
+            "script": "scripts/forecast.md"
+          }
+        ]
+      }
+    }
+  ]
+}
