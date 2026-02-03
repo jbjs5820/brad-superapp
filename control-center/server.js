@@ -14,6 +14,7 @@ const {
   importFromInboxMd,
   getGitInfo,
 } = require('./src/tasks');
+const { createMemory, getMemory, listMemories, searchMemories } = require('./src/memory');
 const { layout, taskTable, taskForm, pill, escapeHtml } = require('./src/views');
 
 const PORT = process.env.PORT || 4567;
@@ -462,7 +463,7 @@ app.get('/jobs', (req, res) => {
               <form method="POST" action="/jobs/run-digest" class="inline">
                 <button class="btn" type="submit">Run digest now</button>
               </form>
-              <div class="muted small" style="margin-top:10px">Isto faz <code>clawdbot cron run d0502... --force</code></div>
+              <div class="muted small" style="margin-top:10px">Isto faz <span class="code-inline">clawdbot cron run d0502... --force</span></div>
             </div>
           </div>
           <div class="col">
@@ -481,6 +482,7 @@ app.get('/jobs', (req, res) => {
           <h2>Links</h2>
           <div class="inline">
             <a class="btn secondary" href="/usage">Usage</a>
+            <a class="btn secondary" href="/memory">Memory</a>
             <a class="btn secondary" href="/health">Health</a>
             <a class="btn secondary" href="http://localhost:4677" target="_blank" rel="noreferrer">Bot Store</a>
           </div>
@@ -500,6 +502,121 @@ app.post('/jobs/run-digest', (req, res) => {
   } catch (e) {
     return res.redirect('/jobs?notice=' + encodeURIComponent('Falhou a correr o digest. Vê logs no terminal.'));
   }
+});
+
+app.get('/memory', (req, res) => {
+  const q = req.query.q ? String(req.query.q) : '';
+  const createdId = req.query.created ? Number(req.query.created) : null;
+  const notice = createdId ? `<div class="notice">✅ Nota guardada (#${createdId}).</div>` : '';
+
+  const results = q.trim() ? searchMemories({ q, limit: 50 }) : listMemories({ limit: 30 });
+
+  const items = results
+    .map((m) => {
+      const tags = m.tags ? `<div class="muted small">Tags: ${escapeHtml(m.tags)}</div>` : '';
+      const body = escapeHtml(m.body || '');
+      const preview = body.length > 280 ? body.slice(0, 280) + '…' : body;
+      return `<li>
+        <div><strong><a href="/memory/${m.id}">${escapeHtml(m.title)}</a></strong> <span class="muted small">#${m.id} · ${escapeHtml(
+        String(m.updated_at).slice(0, 19)
+      )}</span></div>
+        ${tags}
+        <div class="muted small" style="margin-top:6px">${preview}</div>
+      </li>`;
+    })
+    .join('');
+
+  res.send(
+    layout({
+      title: 'Memory · Brad Control Center',
+      active: 'memory',
+      body: `
+        <h1>Memory</h1>
+        <p class="muted">Memória persistente (SQLite + FTS5). Auditável e local.</p>
+        ${notice}
+
+        <div class="row">
+          <div class="col">
+            <div class="card">
+              <h2>Guardar nota</h2>
+              <form method="POST" action="/memory" class="grid">
+                <label class="full">
+                  <span>Título</span>
+                  <input name="title" required placeholder="Ex: Decisão sobre Mac mini / pricing / roadmap" />
+                </label>
+                <label class="full">
+                  <span>Tags</span>
+                  <input name="tags" placeholder="ex: finance, roadmap, ops" />
+                </label>
+                <label class="full">
+                  <span>Texto</span>
+                  <textarea name="body" rows="6" required placeholder="Escreve aqui a decisão/nota/contexto…"></textarea>
+                </label>
+                <div class="full">
+                  <button class="btn" type="submit">Guardar</button>
+                </div>
+              </form>
+            </div>
+          </div>
+          <div class="col">
+            <div class="card">
+              <h2>Pesquisar</h2>
+              <form method="GET" action="/memory" class="inline">
+                <input name="q" placeholder="Search…" value="${escapeHtml(q)}" style="min-width:280px" />
+                <button class="btn secondary" type="submit">Search</button>
+              </form>
+              <div class="spacer"></div>
+              <ul class="links">
+                ${items || '<li class="muted">Sem notas ainda.</li>'}
+              </ul>
+            </div>
+          </div>
+        </div>
+      `,
+    })
+  );
+});
+
+app.post('/memory', (req, res) => {
+  const title = (req.body.title || '').trim();
+  const tags = (req.body.tags || '').trim();
+  const body = (req.body.body || '').trim();
+
+  if (!title || !body) {
+    return res.redirect('/memory?notice=' + encodeURIComponent('Falta título ou texto.'));
+  }
+
+  const id = createMemory({ title, tags, body });
+  return res.redirect('/memory?created=' + id);
+});
+
+app.get('/memory/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const m = getMemory(id);
+  if (!m) return res.status(404).send('Not found');
+
+  res.send(
+    layout({
+      title: `${m.title} · Memory · Brad Control Center`,
+      active: 'memory',
+      body: `
+        <div class="row">
+          <div class="col">
+            <h1>${escapeHtml(m.title)}</h1>
+            <p class="muted small">#${m.id} · created ${escapeHtml(String(m.created_at).slice(0, 19))} · updated ${escapeHtml(
+        String(m.updated_at).slice(0, 19)
+      )}</p>
+            ${m.tags ? `<p class="muted small">Tags: ${escapeHtml(m.tags)}</p>` : ''}
+            <div class="card">
+              <pre class="code" style="white-space:pre-wrap">${escapeHtml(m.body)}</pre>
+            </div>
+            <div class="spacer"></div>
+            <a class="btn secondary" href="/memory">Back</a>
+          </div>
+        </div>
+      `,
+    })
+  );
 });
 
 app.get('/health', (req, res) => {

@@ -30,6 +30,7 @@ function nav(active) {
     { key: 'all', label: 'All', href: '/tasks' },
     { key: 'usage', label: 'Usage', href: '/usage' },
     { key: 'jobs', label: 'Jobs', href: '/jobs' },
+    { key: 'memory', label: 'Memory', href: '/memory' },
     { key: 'import', label: 'Import', href: '/import' },
     { key: 'links', label: 'Links', href: '/links' },
     { key: 'health', label: 'Health', href: '/health' },
