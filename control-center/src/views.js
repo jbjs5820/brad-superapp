@@ -31,6 +31,7 @@ function nav(active) {
     { key: 'usage', label: 'Usage', href: '/usage' },
     { key: 'jobs', label: 'Jobs', href: '/jobs' },
     { key: 'memory', label: 'Memory', href: '/memory' },
+    { key: 'docs', label: 'Docs', href: '/docs' },
     { key: 'import', label: 'Import', href: '/import' },
     { key: 'links', label: 'Links', href: '/links' },
     { key: 'health', label: 'Health', href: '/health' },

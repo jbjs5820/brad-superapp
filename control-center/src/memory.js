@@ -79,4 +79,17 @@ function searchMemories({ q = '', limit = 50 } = {}) {
   return db.prepare(sql).all(fts, Number(limit));
 }
 
-module.exports = { createMemory, getMemory, listMemories, searchMemories, normalizeTags };
+function listMemoriesByTag({ tag = '', limit = 50 } = {}) {
+  const t = String(tag || '').trim().toLowerCase();
+  if (!t) return [];
+  return db
+    .prepare(
+      `SELECT * FROM memories
+       WHERE lower(tags) LIKE ?
+       ORDER BY updated_at DESC
+       LIMIT ?`
+    )
+    .all(`%${t}%`, Number(limit));
+}
+
+module.exports = { createMemory, getMemory, listMemories, listMemoriesByTag, searchMemories, normalizeTags };

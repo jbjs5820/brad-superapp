@@ -3,6 +3,7 @@ const fs = require('fs');
 const express = require('express');
 const dayjs = require('dayjs');
 const os = require('os');
+const multer = require('multer');
 const { execSync } = require('child_process');
 
 const { db, initDb } = require('./src/db');
@@ -14,7 +15,7 @@ const {
   importFromInboxMd,
   getGitInfo,
 } = require('./src/tasks');
-const { createMemory, getMemory, listMemories, searchMemories } = require('./src/memory');
+const { createMemory, getMemory, listMemories, listMemoriesByTag, searchMemories } = require('./src/memory');
 const { layout, taskTable, taskForm, pill, escapeHtml } = require('./src/views');
 
 const PORT = process.env.PORT || 4567;
@@ -41,6 +42,14 @@ function normalizeStatus(s) {
 }
 
 app.get('/favicon.ico', (req, res) => res.status(204).end());
+
+const uploadsDir = path.join(__dirname, 'data', 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+const upload = multer({
+  dest: uploadsDir,
+  limits: { fileSize: 25 * 1024 * 1024 }, // 25MB
+});
 
 function readJsonlUsage({ days = 7, maxFiles = 80 } = {}) {
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
@@ -617,6 +626,115 @@ app.get('/memory/:id', (req, res) => {
       `,
     })
   );
+});
+
+function guessExt(originalName) {
+  const base = path.basename(originalName || '');
+  const m = base.match(/\.([a-zA-Z0-9]+)$/);
+  return m ? m[1].toLowerCase() : '';
+}
+
+function extractTextFromFile({ filePath, originalName }) {
+  const ext = guessExt(originalName);
+  const isPdf = ext === 'pdf';
+
+  if (isPdf) {
+    // 1) OCR the PDF (generates a searchable PDF) and write extracted text to sidecar
+    const outPdf = filePath + '.ocr.pdf';
+    const sidecar = filePath + '.txt';
+    execSync(`ocrmypdf --sidecar "${sidecar}" --force-ocr "${filePath}" "${outPdf}"`, {
+      stdio: 'pipe',
+      timeout: 8 * 60 * 1000,
+    });
+    const text = fs.readFileSync(sidecar, 'utf8');
+    return { text, outPath: outPdf, sidecarPath: sidecar, method: 'ocrmypdf' };
+  }
+
+  // Plain text/markdown -> treat as-is (useful for quick tests)
+  if (['txt', 'md', 'csv', 'log'].includes(ext)) {
+    const text = fs.readFileSync(filePath, 'utf8');
+    return { text, outPath: filePath, sidecarPath: null, method: 'raw' };
+  }
+
+  // Images (png/jpg/etc) -> tesseract to stdout
+  const cmd = `tesseract "${filePath}" stdout -l eng`;
+  const text = execSync(cmd, { stdio: ['ignore', 'pipe', 'pipe'], timeout: 3 * 60 * 1000 }).toString();
+  return { text, outPath: filePath, sidecarPath: null, method: 'tesseract' };
+}
+
+app.get('/docs', (req, res) => {
+  const notice = req.query.notice ? `<div class="notice">${escapeHtml(String(req.query.notice))}</div>` : '';
+  const docs = listMemoriesByTag({ tag: 'doc', limit: 20 });
+
+  const items = docs
+    .map((m) => {
+      const tags = m.tags ? `<div class="muted small">Tags: ${escapeHtml(m.tags)}</div>` : '';
+      const preview = escapeHtml(m.body || '').slice(0, 220) + (m.body && m.body.length > 220 ? '…' : '');
+      return `<li>
+        <div><strong><a href="/memory/${m.id}">${escapeHtml(m.title)}</a></strong> <span class="muted small">#${m.id}</span></div>
+        ${tags}
+        <div class="muted small" style="margin-top:6px">${preview}</div>
+      </li>`;
+    })
+    .join('');
+
+  res.send(
+    layout({
+      title: 'Docs · Brad Control Center',
+      active: 'docs',
+      body: `
+        <h1>Docs</h1>
+        <p class="muted">Upload de PDFs/imagens → OCR local → guardado na Memory (tags: <span class="code-inline">doc</span>).</p>
+        ${notice}
+
+        <div class="card">
+          <h2>Importar documento</h2>
+          <form method="POST" action="/docs/upload" enctype="multipart/form-data" class="grid">
+            <label class="full">
+              <span>Ficheiro (PDF/JPG/PNG)</span>
+              <input type="file" name="file" required />
+            </label>
+            <label class="full">
+              <span>Tags (opcional)</span>
+              <input name="tags" placeholder="ex: bank, invoice, statement" />
+            </label>
+            <div class="full">
+              <button class="btn" type="submit">Upload + OCR</button>
+            </div>
+          </form>
+          <div class="muted small" style="margin-top:10px">Limite: 25MB. PDF usa <span class="code-inline">ocrmypdf</span>. Imagem usa <span class="code-inline">tesseract</span>.</div>
+        </div>
+
+        <div class="spacer"></div>
+        <h2>Recentes</h2>
+        <ul class="links">
+          ${items || '<li class="muted">Sem documentos ainda.</li>'}
+        </ul>
+      `,
+    })
+  );
+});
+
+app.post('/docs/upload', upload.single('file'), (req, res) => {
+  try {
+    if (!req.file) return res.redirect('/docs?notice=' + encodeURIComponent('Sem ficheiro.'));
+
+    const tags = (req.body.tags || '').trim();
+    const original = req.file.originalname || 'document';
+
+    const { text, method } = extractTextFromFile({ filePath: req.file.path, originalName: original });
+
+    const body = text.length > 80000 ? text.slice(0, 80000) + '\n\n[TRUNCATED]' : text;
+    const id = createMemory({
+      title: `Doc: ${original}`,
+      tags: ['doc', method, tags].filter(Boolean).join(', '),
+      body,
+    });
+
+    return res.redirect('/docs?notice=' + encodeURIComponent(`Importado e indexado na Memory (#${id}).`));
+  } catch (e) {
+    return res.redirect('/docs?notice=' + encodeURIComponent('Falhou OCR/import.'));
+  }
 });
 
 app.get('/health', (req, res) => {
